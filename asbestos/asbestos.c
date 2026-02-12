@@ -201,9 +201,12 @@ static inline size_t fiber_cache_hash(addr_t ip) {
 
 static int cpu_step_to_interrupt(struct cpu_state *cpu, struct tlb *tlb) {
     struct asbestos *asbestos = cpu->mmu->asbestos;
-    bool single_thread = (__atomic_load_n(&asbestos->active_threads, __ATOMIC_RELAXED) == 1);
-    if (!single_thread)
-        read_wrlock(&asbestos->jetsam_lock);
+    // Always hold jetsam_lock read while executing JIT code.
+    // This prevents fiber_free_jetsam from freeing blocks we may be executing.
+    // The previous single_thread optimization skipped this lock when only one
+    // thread was active, but a second thread could start between the check and
+    // the jetsam cleanup, allowing freed blocks to be executed.
+    read_wrlock(&asbestos->jetsam_lock);
 
     // Use persistent block cache and frame from TLB; invalidate when blocks are jetsam'd
     bool caches_stale = (tlb->block_cache_gen != asbestos->invalidate_gen);
@@ -286,8 +289,7 @@ static int cpu_step_to_interrupt(struct cpu_state *cpu, struct tlb *tlb) {
     }
     *cpu = frame->cpu;
 
-    if (!single_thread)
-        read_wrunlock(&asbestos->jetsam_lock);
+    read_wrunlock(&asbestos->jetsam_lock);
     return interrupt;
 }
 

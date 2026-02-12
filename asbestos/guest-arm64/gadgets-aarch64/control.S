@@ -33,17 +33,24 @@
  */
 .macro inline_chain reg, unchained_label
     tbnz \reg, #63, \unchained_label
-    // Chained fast path — poke check only (no cycle counter, matches x86)
+    // Chained fast path — poke check + periodic cycle exit
     ldr w11, [\reg, #(-FIBER_BLOCK_code + FIBER_BLOCK_addr)]
     str x11, [_cpu, #CPU_pc]
     ldr x8, [_cpu, #CPU_poked_ptr]
     ldrb w8, [x8]
     cbnz w8, 7778f
+    // Cycle counter: exit to main loop every 1024 chained iterations
+    // to allow interrupt delivery (timers, signals, I/O)
+    ldr w11, [_cpu, #CPU_cycle]
+    add w11, w11, #1
+    str w11, [_cpu, #CPU_cycle]
+    tst w11, #0x3ff
+    b.eq 7778f
     sub x8, \reg, #FIBER_BLOCK_code
     str x8, [_cpu, #LOCAL_last_block]
     mov _pc, \reg
     gret
-7778:   // poke — exit to main loop
+7778:   // poke or cycle limit — exit to main loop
     mov _pc, \reg
     b fiber_ret
 .endm
@@ -107,8 +114,8 @@
     add x9, _cpu, #CPU_x0
     ldr x10, [x9, x8, lsl #3]
 
-    // Store guest PC
-    str x10, [_cpu, #CPU_pc]
+    // Store guest PC (w10 truncates to 32-bit, matching 32-bit address space)
+    str w10, [_cpu, #CPU_pc]
     // Indirect branch: always return to main loop
     b fiber_ret
 
@@ -128,8 +135,8 @@
     // Save return address to X30
     str x11, [_cpu, #(CPU_x0 + 30*8)]
 
-    // Store guest PC
-    str x10, [_cpu, #CPU_pc]
+    // Store guest PC (w10 truncates to 32-bit, matching 32-bit address space)
+    str w10, [_cpu, #CPU_pc]
     // Indirect branch: always return to main loop
     b fiber_ret
 
@@ -148,8 +155,8 @@
     and x8, x8, #0x1f
     add x9, _cpu, #CPU_x0
     ldr x10, [x9, x8, lsl #3]   // x10 = return address (guest PC)
-    // Always set CPU_pc first
-    str x10, [_cpu, #CPU_pc]
+    // Always set CPU_pc first (w10 truncates to 32-bit address space)
+    str w10, [_cpu, #CPU_pc]
     // Look up return address in ret_cache
     ubfx w12, w10, #4, #12
     add x13, _cpu, #LOCAL_ret_cache
@@ -158,7 +165,7 @@
     cbz x14, ret_no_cache
     // Validate: saved return_addr must match actual return address
     ldr x9, [x14, #8]            // x14[1] = return_addr
-    cmp x10, x9
+    cmp w10, w9
     b.ne ret_no_cache
     // Cache hit — load return continuation
     ldr _pc, [x14, #16]          // x14[2] = return_cont (block->code or fake_ip)

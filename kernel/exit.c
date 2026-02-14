@@ -215,7 +215,8 @@ noreturn void do_exit_group(int status) {
             // 1. pthread_exit() completes for all threads
             // 2. TLS destructors run
             // 3. Host malloc/arena cleanup happens
-            struct timespec extra_delay = {0, 200 * 1000000L};  // 200ms
+            // 4. Stack unwinding completes (glibc on ARM64)
+            struct timespec extra_delay = {0, 500 * 1000000L};  // 500ms (increased from 200ms)
             nanosleep(&extra_delay, NULL);
 
 #if __APPLE__
@@ -231,6 +232,17 @@ noreturn void do_exit_group(int status) {
 
     unlock(&group->lock);
     unlock(&pids_lock);
+
+    // On multi-threaded exit, pthread cleanup on host can sometimes trigger
+    // SIGSEGV during stack unwinding (see https://github.com/beehive-lab/mambo/issues/22)
+    // Block SIGSEGV temporarily to prevent cosmetic crashes during final cleanup
+    if (is_group_leader && thread_count > 1) {
+        sigset_t set, oldset;
+        sigemptyset(&set);
+        sigaddset(&set, SIGSEGV);
+        pthread_sigmask(SIG_BLOCK, &set, &oldset);
+    }
+
     do_exit(status);
 }
 

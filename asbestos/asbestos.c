@@ -25,6 +25,9 @@
 // to cpu_state via the _cpu pointer (x1) from ucontext.
 __thread volatile sig_atomic_t in_jit;
 __thread volatile addr_t jit_saved_pc;  // block start PC, read by signal handler
+// Marker set to 1 on iSH execution threads so the signal handler can distinguish
+// iSH threads from app threads (Swift async, networking, UI).
+__thread int ish_thread_marker;
 
 // Architecture-specific instruction pointer access
 #if defined(GUEST_ARM64)
@@ -407,6 +410,7 @@ static int cpu_single_step(struct cpu_state *cpu, struct tlb *tlb) {
 }
 
 int cpu_run_to_interrupt(struct cpu_state *cpu, struct tlb *tlb) {
+    ish_thread_marker = 1;
     if (cpu->poked_ptr == NULL)
         cpu->poked_ptr = &cpu->_poked;
 #ifdef GUEST_ARM64

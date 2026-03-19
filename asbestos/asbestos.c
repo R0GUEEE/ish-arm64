@@ -295,6 +295,13 @@ static int cpu_step_to_interrupt(struct cpu_state *cpu, struct tlb *tlb) {
         }
 
         addr_t ip = CPU_IP(&frame->cpu);
+        // Guard: null guest PC means corrupted state (e.g., branch to unmapped
+        // address 0). Return INT_GPF instead of trying to compile/execute.
+        if (ip == 0) {
+            frame->cpu.segfault_addr = 0;
+            interrupt = INT_GPF;
+            break;
+        }
         size_t cache_index = fiber_cache_hash(ip);
         struct fiber_block *block = cache[cache_index];
         if (block == NULL || block->addr != ip) {

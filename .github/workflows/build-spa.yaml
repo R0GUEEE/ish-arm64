@@ -1,0 +1,49 @@
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+
+jobs:
+  build-ipa:
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install build dependencies
+        run: |
+          brew install ninja lld llvm meson
+
+      - name: Archive Xcode project
+        run: |
+          xcodebuild archive \
+            -project iSH.xcodeproj \
+            -scheme iSH \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/iSH.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO
+
+      - name: Build unsigned IPA from archive
+        run: |
+          mkdir -p Payload
+          cp -R "$RUNNER_TEMP/iSH.xcarchive/Products/Applications/iSH.app" Payload/
+          /usr/bin/zip -r iSH.ipa Payload
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: iSH-ipa
+          path: iSH.ipa
+
+      - name: Upload xcarchive artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: iSH-xcarchive
+          path: ${{ runner.temp }}/iSH.xcarchive
